@@ -51,6 +51,8 @@ int KISSDB_open(
 
 #ifdef _WIN32
 	db->f = (FILE *)0;
+	// 调用fopen()函数时，并未将文件的内容读到内存中，而是在文件系统中找到描述该文件的对象，并建立描述该文件的FILE对象。
+	// fopen只是打开文件，还得用fread或其他读文件命令才能读入文件内容，操作顺序应该是打开文件--读入文件--关闭文件。
 	fopen_s(&db->f,path,((mode == KISSDB_OPEN_MODE_RWREPLACE) ? "w+b" : (((mode == KISSDB_OPEN_MODE_RDWR)||(mode == KISSDB_OPEN_MODE_RWCREAT)) ? "r+b" : "rb")));
 #else
 	db->f = fopen(path,((mode == KISSDB_OPEN_MODE_RWREPLACE) ? "w+b" : (((mode == KISSDB_OPEN_MODE_RDWR)||(mode == KISSDB_OPEN_MODE_RWCREAT)) ? "r+b" : "rb")));
@@ -68,15 +70,19 @@ int KISSDB_open(
 			return KISSDB_ERROR_IO;
 	}
 
-	if (fseeko(db->f,0,SEEK_END)) {
+	if (fseeko(db->f,0,SEEK_END)) { // 文件指针指向文件尾部
 		fclose(db->f);
 		return KISSDB_ERROR_IO;
 	}
+	// 返回当前文件位置指示。通过判断文件尾部是否大于数据库头部来判断
 	if (ftello(db->f) < KISSDB_HEADER_SIZE) {
 		/* write header if not already present */
+		// 说明没有头部，需要新加头部
 		if ((hash_table_size)&&(key_size)&&(value_size)) {
 			if (fseeko(db->f,0,SEEK_SET)) { fclose(db->f); return KISSDB_ERROR_IO; }
+			// 数据库头部的一些自定义字符。其中第四个字节为版本号。这些都需要校验的
 			tmp2[0] = 'K'; tmp2[1] = 'd'; tmp2[2] = 'B'; tmp2[3] = KISSDB_VERSION;
+			// 写入头部信息
 			if (fwrite(tmp2,4,1,db->f) != 1) { fclose(db->f); return KISSDB_ERROR_IO; }
 			tmp = hash_table_size;
 			if (fwrite(&tmp,sizeof(uint64_t),1,db->f) != 1) { fclose(db->f); return KISSDB_ERROR_IO; }
@@ -327,17 +333,17 @@ put_no_match_next_hash_table:
 	if (fseeko(db->f,0,SEEK_END)) // 文件指针移到整个文件的尾部，新增一个hash表
 		return KISSDB_ERROR_IO;
 	endoffset = ftello(db->f);
-
+	// 新增一个ht，也就是对原有的ht进行扩容，新增为原有ht+1
 	hash_tables_rea = realloc(db->hash_tables,db->hash_table_size_bytes * (db->num_hash_tables + 1));
 	if (!hash_tables_rea)
 		return KISSDB_ERROR_MALLOC;
-	db->hash_tables = hash_tables_rea;
-	cur_hash_table = &(db->hash_tables[(db->hash_table_size + 1) * db->num_hash_tables]);
+	db->hash_tables = hash_tables_rea; // hash_tables为扩容后的ht
+	cur_hash_table = &(db->hash_tables[(db->hash_table_size + 1) * db->num_hash_tables]); // 更新当前使用的ht
 	memset(cur_hash_table,0,db->hash_table_size_bytes);
 	// hash表里面存的是相对于文件开始的偏移，还需要加上hash表本身的大小。
 	// 这说明hash与kv是紧凑存储的
 	cur_hash_table[hash] = endoffset + db->hash_table_size_bytes; /* where new entry will go */
-
+	// 将新的ht全部写入文件中
 	if (fwrite(cur_hash_table,db->hash_table_size_bytes,1,db->f) != 1)
 		return KISSDB_ERROR_IO;
 	// 新建一块ht后，写入数据
@@ -403,7 +409,7 @@ int KISSDB_Iterator_next(KISSDB_Iterator *dbi,void *kbuf,void *vbuf)
 
 	return 0;
 }
-
+#define KISSDB_TEST1
 #ifdef KISSDB_TEST
 
 #include <inttypes.h>
@@ -429,7 +435,7 @@ int main(int argc,char **argv)
 	for(i=0;i<10000;++i) {
 		for(j=0;j<8;++j)
 			v[j] = i;
-		if (KISSDB_put(&db,&i,v)) {
+		if (KISSDB_put(&db,&i,v, sizeof(v))) {
 			printf("KISSDB_put failed (%"PRIu64")\n",i);
 			return 1;
 		}
