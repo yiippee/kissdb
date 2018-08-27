@@ -67,3 +67,5 @@ See comments in kissdb.h for documentation. Makefile can be used to build
 a test program on systems with gcc.
 
 Author: Adam Ierymenko / ZeroTier Networks LLC
+
+新增kv都可以自定义长度
